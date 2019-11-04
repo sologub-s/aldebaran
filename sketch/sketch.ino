@@ -12,6 +12,7 @@ int fastLedPin         = 12;
 int testLedPin         = 13;
 
 bool followModeEnabled = false;
+int followModeSpeed = 250;
 int followSwitchLast = LOW;
 int followSwitchCurrent = LOW;
 bool followSwitchBlocked = false;
@@ -26,11 +27,13 @@ int fastSwitchLast = LOW;
 int fastSwitchCurrent = LOW;
 int fastModeDirection = directionCc;
 
-int fastModeSpeedMax = 1000;
+int fastModeSpeedMax = 5000;
 int fastModeSpeedCurrent = 0;
-int fastModeSpeedAccelerationSteps = 200;
-int fastModeSpeedAccelerationMillis = 1000;
+int fastModeSpeedAccelerationSteps = 1;
+int fastModeSpeedAccelerationMillis = 3;
 unsigned long fastModeSpeedLastChanged = 0;
+
+String serialIncomingString = "";
 
 AccelStepper stepper(AccelStepper::DRIVER, motorPinStep, motorPinDirection);
 
@@ -53,6 +56,9 @@ void setup()
 
   pinMode(testLedPin, OUTPUT);
   digitalWrite(testLedPin, LOW);
+
+  // initialize serial listener
+  Serial.begin(115200);
 }
 
 void loop()
@@ -62,6 +68,7 @@ void loop()
   checkFastButtons();
   handleFastMode();
   handleMotorPower();
+  handleSerialInput();
 }
 
 void handleMotorPower()
@@ -91,8 +98,8 @@ void handleFollowMode()
 {
 
   if (followModeEnabled && !fastModeEnabled) {
-    stepper.setMaxSpeed(250 * directionC);
-    stepper.setSpeed(250 * directionC);
+    stepper.setMaxSpeed(followModeSpeed * directionCc);
+    stepper.setSpeed(followModeSpeed * directionCc);
     stepper.runSpeed();
   }
         
@@ -144,4 +151,18 @@ void handleFastMode()
         
   digitalWrite(fastLedPin, fastModeEnabled ? HIGH : LOW);
   fastModeEnabledLast = fastModeEnabled;
+}
+
+void handleSerialInput()
+{
+  if (Serial.available() == 0) {
+    return;
+  }
+  
+  serialIncomingString = Serial.readString();
+  serialIncomingString.trim();
+  
+  Serial.println(String("") + String("Received: ") + serialIncomingString);
+  followModeSpeed = atoi(serialIncomingString.c_str());
+  Serial.println(String("followModeSpeed was changed to: ") + serialIncomingString + " steps per second");
 }
