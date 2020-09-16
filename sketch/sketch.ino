@@ -47,8 +47,8 @@ const int pulseGuide_GUIDE_WEST         = 3;
 int   pulseGuide_Ra_multi     = 1;
 long  pulseGuide_until        = 0;
 bool  pulseGuide_active       = false;
-float pulseGuide_raPlusMulti  = 1.25;
-float pulseGuide_raMinusMulti = 0.75;
+float pulseGuide_raPlusMulti  = 2;
+float pulseGuide_raMinusMulti = 0;
 
 AccelStepper stepper(AccelStepper::DRIVER, motorPinStep, motorPinDirection);
 
