@@ -37,11 +37,13 @@ int decSouth = LOW;
 
 int slewRa = 0;
 unsigned long lastRaStepUpAgo = 0;
-unsigned long raFreq = 3;
+//unsigned long raFreq = 3;
+unsigned long raFreq = 1;
 
 int slewDec = 0;
 unsigned long lastDecStepUpAgo = 0;
-unsigned long decFreq = 3;
+//unsigned long decFreq = 3;
+unsigned long decFreq = 1;
 
 unsigned long lastSkyMoveAgo = 0;
 
@@ -87,7 +89,7 @@ int gotoDecDir = decNorth;
 bool gotoDecFreq = 2;
 int DEC_RIGHT = 1;
 
-Coordinator coordinator(informer, microstepsInRa, microstepsInDec);
+Coordinator coordinator(informer, microstepsInRa, microstepsInDec, currentHemisphere, currentDecWard);
 
 void setup() {
 
@@ -95,6 +97,7 @@ void setup() {
 
   informer.send("SYSTEM_STARTING#");
 
+  /*
   if (currentHemisphere == 'n') {
     if (currentDecWard == 'e') {
         int decNorth = HIGH;
@@ -111,6 +114,15 @@ void setup() {
         int decNorth = HIGH;
         int decSouth = LOW;
     }
+  }
+  */
+
+  if (currentDecWard == 'e') {
+      int decNorth = HIGH;
+      int decSouth = LOW;
+  } else {
+      int decNorth = LOW;
+      int decSouth = HIGH;
   }
 
   // RA pin DIR
@@ -159,6 +171,8 @@ void timer_handle_interrupts(int timer) {
 
   raCurrentDir = (PIND & _BV(PD4)) > 0 ? raForward : raBackward;
   //decCurrentDir = (PIND & _BV(PD6)) > 0 ? decNorth : decSouth;
+
+  /*
   if (currentHemisphere == 'n') {
     if (currentDecWard == 'e') {
       decCurrentDir = (PIND & _BV(PD6)) > 0 ? decNorth : decSouth;
@@ -171,6 +185,21 @@ void timer_handle_interrupts(int timer) {
     } else {
       decCurrentDir = (PIND & _BV(PD6)) > 0 ? decNorth : decSouth;
     }
+  }
+  */
+
+  /*
+  if (currentDecWard == 'e') {
+    decCurrentDir = (PIND & _BV(PD6)) > 0 ? decNorth : decSouth;
+  } else {
+    decCurrentDir = (PIND & _BV(PD6)) > 0 ? decSouth : decNorth;
+  }
+  */
+
+  if (currentDecWard == 'e') {
+    decCurrentDir = (PIND & _BV(PD6)) > 0 ? decNorth : decSouth;
+  } else {
+    decCurrentDir = (PIND & _BV(PD6)) > 0 ? decSouth : decNorth;
   }
 
   if (follow && !slewRa && !gotoRaEnabled) {
@@ -209,6 +238,7 @@ void timer_handle_interrupts(int timer) {
       PORTD |= _BV(PD7);
       PORTD &= ~_BV(PD7);
 
+      /*
       if (currentHemisphere == 'n') {
         if (currentDecWard == 'e') {
           if (decCurrentDir == decNorth) {
@@ -236,6 +266,21 @@ void timer_handle_interrupts(int timer) {
           } else {
             currentDecCoords++; // @TODO RIGHT_LEFT
           }
+        }
+      }
+      */
+
+      if (currentDecWard == 'e') {
+        if (decCurrentDir == decNorth) {
+          currentDecCoords++; // @TODO RIGHT_LEFT
+        } else {
+          currentDecCoords--; // @TODO RIGHT_LEFT
+        }
+      } else {
+        if (decCurrentDir == decNorth) {
+          currentDecCoords--; // @TODO RIGHT_LEFT
+        } else {
+          currentDecCoords++; // @TODO RIGHT_LEFT
         }
       }
       
@@ -272,6 +317,7 @@ void timer_handle_interrupts(int timer) {
       PORTD |= _BV(PD7);
       PORTD &= ~_BV(PD7);
 
+      /*
       if (currentHemisphere == 'n') {
         if (currentDecWard == 'e') {
           if (gotoDecDir == decNorth) {
@@ -299,6 +345,21 @@ void timer_handle_interrupts(int timer) {
           } else {
             currentDecCoords--; // @TODO RIGHT_LEFT
           }
+        }
+      }
+      */
+
+      if (currentDecWard == 'e') {
+        if (gotoDecDir == decNorth) {
+          currentDecCoords++; // @TODO RIGHT_LEFT
+        } else {
+          currentDecCoords--; // @TODO RIGHT_LEFT
+        }
+      } else {
+        if (gotoDecDir == decNorth) {
+          currentDecCoords--; // @TODO RIGHT_LEFT
+        } else {
+          currentDecCoords++; // @TODO RIGHT_LEFT
         }
       }
 
@@ -434,6 +495,17 @@ void loop() {
         //informer.logLn("executing slew_dec_freq");
         decFreq = command.getValue().toInt();
         informer.logLn("decFreq: " + String(slewDec));
+      }
+
+      if (command.getName() == "GET_DEC_WARD") {
+        informer.send("DEC_WARD=" + String(currentDecWard));
+      }
+
+      if (command.getName() == "SET_DEC_WARD") {
+        //informer.logLn("executing SET_DEC_WARD ...");
+        char newDecWard = command.getValue() == "e" ? 'e' : 'w';
+        currentDecWard = newDecWard;
+        informer.logLn("currentDecWard: " + String(currentDecWard));
       }
 
       if (command.getName() == "FOLLOW") {
@@ -577,6 +649,7 @@ void gotoDecCoordsProc(long gotoDecCoords)
   
   // @TODO RIGHT_LEFT
 
+  /*
   if (currentHemisphere == 'n') {
     if (currentDecWard == 'e') {
       if (newGotoDecSteps < 0) {
@@ -612,6 +685,29 @@ void gotoDecCoordsProc(long gotoDecCoords)
         gotoDecDir = decSouth;
         PORTD &= ~_BV(PD6);
       }
+    }
+  }
+  */
+
+  if (currentDecWard == 'e') {
+    if (newGotoDecSteps < 0) {
+      gotoDecDir = decSouth;
+      PORTD |= _BV(PD6);
+      //PORTD &= ~_BV(PD6);
+    } else {
+      gotoDecDir = decNorth;
+      PORTD &= ~_BV(PD6);
+      //PORTD |= _BV(PD6);
+    }
+  } else {
+    if (newGotoDecSteps < 0) {
+      gotoDecDir = decNorth;
+      //PORTD &= ~_BV(PD6);
+      PORTD |= _BV(PD6);
+    } else {
+      gotoDecDir = decSouth;
+      //PORTD |= _BV(PD6);
+      PORTD &= ~_BV(PD6);
     }
   }
 

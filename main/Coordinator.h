@@ -16,6 +16,10 @@ class Coordinator
 
     double stepsPerDecSecond = 0;
 
+    char currentHemisphere = 'n';
+
+    char currentDecWard = 'e';
+
     void init()
     {
       this->stepsPerRaSecond = round(this->microstepsInRa / 86400);
@@ -26,13 +30,25 @@ class Coordinator
   
   public:
 
-    Coordinator(Informer informer, long microstepsInRa, long microstepsInDec)
+    Coordinator(Informer informer, long microstepsInRa, long microstepsInDec, char currentHemisphere, char currentDecWard)
     {
       this->informer = informer;
       this->microstepsInRa = microstepsInRa;
       this->microstepsInDec = microstepsInDec;
+      this->currentHemisphere = currentHemisphere;
+      this->currentDecWard = currentDecWard;
 
       this->init();
+    }
+
+    void setCurrentDecWard(char currentDecWard)
+    {
+      this->currentDecWard = currentDecWard;
+    }
+
+    long raCoordsEastToWest(long raCoords)
+    {
+      
     }
 
     long raCoordsToStepsFromString(String raCoordsString)
@@ -150,7 +166,7 @@ class Coordinator
           currentValue += curChar;
         }
       }
-
+        
       long positionInSteps = 0;
 
       positionInSteps += round(this->stepsPerDecSecond * 3600.0 * double((degrees + 90))); // @TODO RIGHT_LEFT
@@ -158,6 +174,10 @@ class Coordinator
       positionInSteps += round(this->stepsPerDecSecond * 60.0 * double(minutes));
   
       positionInSteps += round(this->stepsPerDecSecond * double(seconds));
+      
+      if (this->currentDecWard == 'w') {
+        positionInSteps = 2764800 - positionInSteps;
+      }
   
       //this->informer.logLn("DEC degrees: " + String(degrees));
       //this->informer.logLn("DEC minutes: " + String(minutes));
@@ -169,6 +189,11 @@ class Coordinator
 
     String decCoordsToStringFromSteps(long decCoords)
     {
+      
+      if (this->currentDecWard == 'w') {
+        decCoords = 2764800 - decCoords;
+      }
+      
       long totalSeconds = round(decCoords / this->stepsPerDecSecond);
       
       int degrees = totalSeconds / 3600 - 90;
