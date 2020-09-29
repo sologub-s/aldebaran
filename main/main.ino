@@ -25,12 +25,14 @@ const int pinDecStp = 7;
 
 const int pinIRrecv = 8;
 
+const int pinMotorFast = 9;
+
 //IRrecv irrecv(pinIRrecv);
 //decode_results irrecvResults;
 //int resultsValue = 0;
 
-const int raForward = HIGH;
-const int raBackward = LOW;
+int raForward = HIGH;
+int raBackward = LOW;
 
 int decNorth = HIGH;
 int decSouth = LOW;
@@ -52,7 +54,8 @@ unsigned long lastRaFollowAgo = 0;
 //float followFreq = 15582.3206 / 5; // anyway, decimal part doesn't matter...
 //float followFreq = 3116.4641199999996; // anyway, decimal part doesn't matter...
 //int followFreq = 3116;
-int followFreq = 311;
+int followFreq = 311; // true speed !
+//int followFreq = 1;
 
 //float raSecondsPerMicrostep = 0.00002005477925815886 * 5;
 //float raSecondsPerMicrostep = 0.0001002738962907943;
@@ -89,6 +92,10 @@ int gotoDecDir = decNorth;
 bool gotoDecFreq = 2;
 int DEC_RIGHT = 1;
 
+int slowRadius = 3000;
+int fastMode = false;
+int coordsPerStep = 1;
+
 Coordinator coordinator(informer, microstepsInRa, microstepsInDec, currentHemisphere, currentDecWard);
 
 void setup() {
@@ -96,26 +103,6 @@ void setup() {
   Serial.begin(serialSpeed);
 
   informer.send("SYSTEM_STARTING#");
-
-  /*
-  if (currentHemisphere == 'n') {
-    if (currentDecWard == 'e') {
-        int decNorth = HIGH;
-        int decSouth = LOW;
-    } else {
-        int decNorth = LOW;
-        int decSouth = HIGH;
-    }
-  } else {
-    if (currentDecWard == 'e') {
-        int decNorth = LOW;
-        int decSouth = HIGH;
-    } else {
-        int decNorth = HIGH;
-        int decSouth = LOW;
-    }
-  }
-  */
 
   if (currentDecWard == 'e') {
       int decNorth = HIGH;
@@ -125,9 +112,26 @@ void setup() {
       int decSouth = HIGH;
   }
 
+  if (currentHemisphere == 's') {
+    decNorth = decNorth == HIGH ? LOW : HIGH;
+    decSouth = decSouth == HIGH ? LOW : HIGH;
+
+    raForward = LOW;
+    raBackward = HIGH;
+  }
+
+  // motors pin speed
+  pinMode(pinMotorFast, OUTPUT);
+  digitalWrite(pinMotorFast, HIGH);
+
   // RA pin DIR
   pinMode(pinRaDir, OUTPUT);
   digitalWrite(pinRaDir, raForward);
+  /*
+  if (currentHemisphere == 's') {
+    digitalWrite(pinRaDir, raBackward);
+  }
+  */
 
   // RA pin STP
   pinMode(pinRaStp, OUTPUT);
@@ -172,44 +176,32 @@ void timer_handle_interrupts(int timer) {
   raCurrentDir = (PIND & _BV(PD4)) > 0 ? raForward : raBackward;
   //decCurrentDir = (PIND & _BV(PD6)) > 0 ? decNorth : decSouth;
 
-  /*
-  if (currentHemisphere == 'n') {
-    if (currentDecWard == 'e') {
-      decCurrentDir = (PIND & _BV(PD6)) > 0 ? decNorth : decSouth;
-    } else {
-      decCurrentDir = (PIND & _BV(PD6)) > 0 ? decSouth : decNorth;
-    }
-  }else {
-    if (currentDecWard == 'e') {
-      decCurrentDir = (PIND & _BV(PD6)) > 0 ? decSouth : decNorth;
-    } else {
-      decCurrentDir = (PIND & _BV(PD6)) > 0 ? decNorth : decSouth;
-    }
-  }
-  */
-
-  /*
   if (currentDecWard == 'e') {
     decCurrentDir = (PIND & _BV(PD6)) > 0 ? decNorth : decSouth;
   } else {
     decCurrentDir = (PIND & _BV(PD6)) > 0 ? decSouth : decNorth;
   }
-  */
 
-  if (currentDecWard == 'e') {
-    decCurrentDir = (PIND & _BV(PD6)) > 0 ? decNorth : decSouth;
-  } else {
-    decCurrentDir = (PIND & _BV(PD6)) > 0 ? decSouth : decNorth;
+  if (currentHemisphere == 's') {
+    decCurrentDir == decNorth ? decSouth : decNorth;
   }
 
   if (follow && !slewRa && !gotoRaEnabled) {
     if (lastRaFollowAgo >= followFreq) {
       PORTD |= _BV(PD5);
       PORTD &= ~_BV(PD5);
-      if (raCurrentDir == raForward) {
-        currentRaCoords--;
+      if (currentHemisphere == 'n') {
+        if (raCurrentDir == raForward) {
+          currentRaCoords--;
+        } else {
+          currentRaCoords++;
+        }
       } else {
-        currentRaCoords++;
+        if (raCurrentDir == raForward) {
+          currentRaCoords++;
+        } else {
+          currentRaCoords--;
+        }
       }
       
       lastRaFollowAgo = 0;
@@ -222,11 +214,26 @@ void timer_handle_interrupts(int timer) {
     if (lastRaStepUpAgo >= raFreq) {
       PORTD |= _BV(PD5);
       PORTD &= ~_BV(PD5);
+      if (currentHemisphere == 'n') {
+        if (raCurrentDir == raForward) {
+          currentRaCoords--;
+        } else {
+          currentRaCoords++;
+        }
+      } else {
+        if (raCurrentDir == raForward) {
+          currentRaCoords++;
+        } else {
+          currentRaCoords--;
+        }
+      }
+      /*
       if (raCurrentDir == raForward) {
         currentRaCoords--;
       } else {
         currentRaCoords++;
       }
+      */
       lastRaStepUpAgo = 0;
     } else {
       lastRaStepUpAgo++;
@@ -238,59 +245,37 @@ void timer_handle_interrupts(int timer) {
       PORTD |= _BV(PD7);
       PORTD &= ~_BV(PD7);
 
-      /*
+      // ?
       if (currentHemisphere == 'n') {
         if (currentDecWard == 'e') {
           if (decCurrentDir == decNorth) {
-            currentDecCoords--; // @TODO RIGHT_LEFT
-          } else {
             currentDecCoords++; // @TODO RIGHT_LEFT
+          } else {
+            currentDecCoords--; // @TODO RIGHT_LEFT
           }
         } else {
           if (decCurrentDir == decNorth) {
-            currentDecCoords++; // @TODO RIGHT_LEFT
-          } else {
             currentDecCoords--; // @TODO RIGHT_LEFT
+          } else {
+            currentDecCoords++; // @TODO RIGHT_LEFT
           }
         }
       } else {
         if (currentDecWard == 'e') {
           if (decCurrentDir == decNorth) {
-            currentDecCoords++; // @TODO RIGHT_LEFT
-          } else {
             currentDecCoords--; // @TODO RIGHT_LEFT
+          } else {
+            currentDecCoords++; // @TODO RIGHT_LEFT
           }
         } else {
           if (decCurrentDir == decNorth) {
-            currentDecCoords--; // @TODO RIGHT_LEFT
-          } else {
             currentDecCoords++; // @TODO RIGHT_LEFT
+          } else {
+            currentDecCoords--; // @TODO RIGHT_LEFT
           }
         }
       }
-      */
 
-      if (currentDecWard == 'e') {
-        if (decCurrentDir == decNorth) {
-          currentDecCoords++; // @TODO RIGHT_LEFT
-        } else {
-          currentDecCoords--; // @TODO RIGHT_LEFT
-        }
-      } else {
-        if (decCurrentDir == decNorth) {
-          currentDecCoords--; // @TODO RIGHT_LEFT
-        } else {
-          currentDecCoords++; // @TODO RIGHT_LEFT
-        }
-      }
-      
-      /*
-      if (decCurrentDir == decNorth) {
-        currentDecCoords++; // @TODO RIGHT_LEFT
-      } else {
-        currentDecCoords--; // @TODO RIGHT_LEFT
-      }
-      */
       lastDecStepUpAgo = 0;
     } else {
       lastDecStepUpAgo++;
@@ -317,38 +302,6 @@ void timer_handle_interrupts(int timer) {
       PORTD |= _BV(PD7);
       PORTD &= ~_BV(PD7);
 
-      /*
-      if (currentHemisphere == 'n') {
-        if (currentDecWard == 'e') {
-          if (gotoDecDir == decNorth) {
-            currentDecCoords++; // @TODO RIGHT_LEFT
-          } else {
-            currentDecCoords--; // @TODO RIGHT_LEFT
-          }
-        } else {
-          if (gotoDecDir == decNorth) {
-            currentDecCoords--; // @TODO RIGHT_LEFT
-          } else {
-            currentDecCoords++; // @TODO RIGHT_LEFT
-          }
-        }
-      } else {
-        if (currentDecWard == 'e') {
-          if (gotoDecDir == decNorth) {
-            currentDecCoords--; // @TODO RIGHT_LEFT
-          } else {
-            currentDecCoords++; // @TODO RIGHT_LEFT
-          }
-        } else {
-          if (gotoDecDir == decNorth) {
-            currentDecCoords++; // @TODO RIGHT_LEFT
-          } else {
-            currentDecCoords--; // @TODO RIGHT_LEFT
-          }
-        }
-      }
-      */
-
       if (currentDecWard == 'e') {
         if (gotoDecDir == decNorth) {
           currentDecCoords++; // @TODO RIGHT_LEFT
@@ -362,14 +315,6 @@ void timer_handle_interrupts(int timer) {
           currentDecCoords++; // @TODO RIGHT_LEFT
         }
       }
-
-      /*
-      if (gotoDecDir == decNorth) {
-        currentDecCoords++; // @TODO RIGHT_LEFT
-      } else {
-        currentDecCoords--; // @TODO RIGHT_LEFT
-      }
-      */
       
       gotoDecSteps--;
       lastDecStepUpAgo = 0;
@@ -380,6 +325,13 @@ void timer_handle_interrupts(int timer) {
     if (gotoRaSteps <= 0) {
       gotoRaEnabled = false;
       PORTD |= _BV(PD4); // setting direction for follow by default
+      /*
+      if (currentHemisphere == 'n') {
+        PORTD |= _BV(PD4); // setting direction for follow by default
+      } else {
+        PORTD &= ~_BV(PD4);
+      }
+      */
     }
 
     if (gotoDecSteps <= 0) {
@@ -425,11 +377,26 @@ void loop() {
         int newSlewRa = command.getValue().toInt();
         if (slewRa != newSlewRa) {
           slewRa = newSlewRa;
+          if (currentHemisphere == 'n') {
+            if (slewRa > 0) {
+              PORTD &= ~_BV(PD4);
+            } else {
+              PORTD |= _BV(PD4);
+            }
+          } else {
+            if (slewRa > 0) {
+              PORTD |= _BV(PD4);
+            } else {
+              PORTD &= ~_BV(PD4);
+            }
+          }
+          /*
           if (slewRa > 0) {
             PORTD &= ~_BV(PD4);
           } else {
             PORTD |= _BV(PD4);
           }
+          */
           informer.logLn("slewRa: " + String(slewRa));
         }
       }
@@ -449,6 +416,21 @@ void loop() {
         if (slewDec != newSlewDec) {
           slewDec = newSlewDec;
 
+          if (currentDecWard == 'e') {
+            if (slewDec > 0) {
+              PORTD &= ~_BV(PD6);
+            } else {
+              PORTD |= _BV(PD6);
+            }
+          } else {
+            if (slewDec > 0) {
+              PORTD |= _BV(PD6);
+            } else {
+              PORTD &= ~_BV(PD6);
+            }
+          }
+
+          /*
           if (currentHemisphere == 'n') {
             if (currentDecWard == 'e') {
               if (slewDec > 0) {
@@ -478,13 +460,6 @@ void loop() {
               }
             }
           }
-
-          /*
-          if (slewDec > 0) {
-            PORTD &= ~_BV(PD6);
-          } else {
-            PORTD |= _BV(PD6);
-          }
           */
           
           informer.logLn("slewDec: " + String(slewDec));
@@ -513,6 +488,9 @@ void loop() {
         bool toFollow = command.getValue().toInt() == 0 ? false : true;
         if (toFollow) {
           PORTD |= _BV(PD4);
+          if (currentHemisphere == 's') {
+            PORTD &= ~_BV(PD4);
+          }
         }
         follow = toFollow;
         informer.logLn("follow: " + String(follow));
@@ -635,8 +613,14 @@ void gotoRaCoordsProc(long gotoRaCoords)
   
   if (gotoRaDir == raBackward) {
     PORTD &= ~_BV(PD4);
+    if (currentHemisphere == 's') {
+      PORTD |= _BV(PD4);
+    }
   } else {
     PORTD |= _BV(PD4);
+    if (currentHemisphere == 's') {
+      PORTD &= ~_BV(PD4);
+    }
   }
   
   gotoEnabled = true;
