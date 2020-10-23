@@ -1,13 +1,31 @@
 #include "timer-api.h"
 
 #include <math.h>
-//#include <IRremote.h>
+//#define IR_USE_TIMER0
+//#define IR_SMALLD_NEC
+#include <IRremote.h>
 
 #include "Command.h"
 #include "Commander.h"
 #include "Info.h"
 #include "Informer.h"
 #include "Coordinator.h"
+
+//GUIDING
+struct GuideDirections {
+  int guideNorth;
+  int guideSouth;
+  int guideEast;
+  int guideWest;
+};
+
+GuideDirections guideDirections;
+
+// beeper
+const int pinBeep = 13;
+bool beepOn = false;
+unsigned long beepMillisOn = 0;
+unsigned long beepMillisPeriod = 50;
 
 Commander commander;
 Informer informer;
@@ -23,13 +41,30 @@ const int pinRaStp = 5;
 const int pinDecDir = 6;
 const int pinDecStp = 7;
 
-const int pinIRrecv = 8;
+const int pinMotorFast = 8;
 
-const int pinMotorFast = 9;
+// IR
+const int pinIRrecv = 2; // hardware interrupt pin for Uno/Nano
+IRrecv irrecv(pinIRrecv);
+decode_results irrecvResults;
+long irrecvResultsValue = 0;
+long irrecvPreviousResultsValue = 0;
 
-//IRrecv irrecv(pinIRrecv);
-//decode_results irrecvResults;
-//int resultsValue = 0;
+// IR Control
+const unsigned long IR_BUTTON_REPEAT =  0xffffffff;
+const unsigned long IR_BUTTON_1 =       0xffa25d;
+const unsigned long IR_BUTTON_STAR =    0xff6897;
+const unsigned long IR_BUTTON_UP =      0xff18e7;
+const unsigned long IR_BUTTON_DOWN =    0xff4ab5;
+const unsigned long IR_BUTTON_LEFT =    0xff10ef;
+const unsigned long IR_BUTTON_RIGHT =   0xff5aa5;
+const unsigned long IR_BUTTON_OK =      0xff38c7;
+
+const unsigned long IR_BUTTON_RA_PLUS =   IR_BUTTON_UP;
+const unsigned long IR_BUTTON_RA_MINUS =  IR_BUTTON_DOWN;
+const unsigned long IR_BUTTON_DEC_PLUS =  IR_BUTTON_LEFT;
+const unsigned long IR_BUTTON_DEC_MINUS = IR_BUTTON_RIGHT;
+const unsigned long IR_BUTTON_STOP =      IR_BUTTON_OK;
 
 int raForward = HIGH;
 int raBackward = LOW;
@@ -92,11 +127,13 @@ int gotoDecDir = decNorth;
 bool gotoDecFreq = 2;
 int DEC_RIGHT = 1;
 
-int slowRadius = 3000;
+int slowRadius = 50000;
 int fastMode = false;
 int coordsPerStep = 1;
 
 Coordinator coordinator(informer, microstepsInRa, microstepsInDec, currentHemisphere, currentDecWard);
+
+bool previouslyGotoEnabled = false;
 
 void setup() {
 
@@ -120,6 +157,12 @@ void setup() {
     raBackward = HIGH;
   }
 
+  // guiding
+  guideDirections.guideNorth = 0;
+  guideDirections.guideSouth = 1;
+  guideDirections.guideEast = 2;
+  guideDirections.guideWest = 3;
+
   // motors pin speed
   pinMode(pinMotorFast, OUTPUT);
   digitalWrite(pinMotorFast, HIGH);
@@ -127,11 +170,6 @@ void setup() {
   // RA pin DIR
   pinMode(pinRaDir, OUTPUT);
   digitalWrite(pinRaDir, raForward);
-  /*
-  if (currentHemisphere == 's') {
-    digitalWrite(pinRaDir, raBackward);
-  }
-  */
 
   // RA pin STP
   pinMode(pinRaStp, OUTPUT);
@@ -145,7 +183,11 @@ void setup() {
   pinMode(pinDecStp, OUTPUT);
   digitalWrite(pinDecStp, LOW);
 
-  //irrecv.enableIRIn();
+  // beeper
+  pinMode(pinBeep, OUTPUT);
+  digitalWrite(pinBeep, LOW);
+
+  irrecv.enableIRIn();
 
   // frequency = 10Khz = 10000Hz, period = 1/10000s = 1/10ms
   //timer_init_ISR_10KHz(TIMER_DEFAULT);
@@ -156,11 +198,35 @@ void setup() {
 
   informer.send("SYSTEM_STARTED#");
 
+  beep();
+
 }
 
 // 10000 times per second
 // 50000 times per second
 void timer_handle_interrupts(int timer) {
+
+  /*
+  // speed
+  if (gotoEnabled) {
+
+    if (
+      (gotoRaSteps == 0 || gotoRaSteps > slowRadius)
+      &&
+      (gotoDecSteps == 0 || gotoDecSteps > slowRadius)
+    ) {
+      PORTB &= ~_BV(PB0);
+      coordsPerStep = 2;
+    } else {
+      PORTB |= _BV(PB0);
+      coordsPerStep = 1;
+    }
+    
+  } else {
+    PORTB |= _BV(PB0);
+    coordsPerStep = 1;
+  }
+  */
 
   if (lastSkyMoveAgo >= followFreq) {
     currentRaCoords++;
@@ -227,13 +293,7 @@ void timer_handle_interrupts(int timer) {
           currentRaCoords--;
         }
       }
-      /*
-      if (raCurrentDir == raForward) {
-        currentRaCoords--;
-      } else {
-        currentRaCoords++;
-      }
-      */
+
       lastRaStepUpAgo = 0;
     } else {
       lastRaStepUpAgo++;
@@ -245,7 +305,21 @@ void timer_handle_interrupts(int timer) {
       PORTD |= _BV(PD7);
       PORTD &= ~_BV(PD7);
 
-      // ?
+      if (currentDecWard == 'e') {
+        if (decCurrentDir == decNorth) {
+          currentDecCoords -= coordsPerStep; // @TODO RIGHT_LEFT
+        } else {
+          currentDecCoords += coordsPerStep; // @TODO RIGHT_LEFT
+        }
+      } else {
+        if (decCurrentDir == decNorth) {
+          currentDecCoords += coordsPerStep; // @TODO RIGHT_LEFT
+        } else {
+          currentDecCoords -= coordsPerStep; // @TODO RIGHT_LEFT
+        }
+      }
+
+      /*
       if (currentHemisphere == 'n') {
         if (currentDecWard == 'e') {
           if (decCurrentDir == decNorth) {
@@ -275,6 +349,7 @@ void timer_handle_interrupts(int timer) {
           }
         }
       }
+      */
 
       lastDecStepUpAgo = 0;
     } else {
@@ -288,11 +363,11 @@ void timer_handle_interrupts(int timer) {
       PORTD |= _BV(PD5);
       PORTD &= ~_BV(PD5);
       if (gotoRaDir == raForward) {
-        currentRaCoords--;
+        currentRaCoords -= coordsPerStep;
       } else {
-        currentRaCoords++;
+        currentRaCoords += coordsPerStep;
       }
-      gotoRaSteps--;
+      gotoRaSteps -= coordsPerStep;
       lastRaStepUpAgo = 0;
     } else {
       lastRaStepUpAgo++;
@@ -304,19 +379,19 @@ void timer_handle_interrupts(int timer) {
 
       if (currentDecWard == 'e') {
         if (gotoDecDir == decNorth) {
-          currentDecCoords++; // @TODO RIGHT_LEFT
+          currentDecCoords += coordsPerStep; // @TODO RIGHT_LEFT
         } else {
-          currentDecCoords--; // @TODO RIGHT_LEFT
+          currentDecCoords -= coordsPerStep; // @TODO RIGHT_LEFT
         }
       } else {
         if (gotoDecDir == decNorth) {
-          currentDecCoords--; // @TODO RIGHT_LEFT
+          currentDecCoords -= coordsPerStep; // @TODO RIGHT_LEFT
         } else {
-          currentDecCoords++; // @TODO RIGHT_LEFT
+          currentDecCoords += coordsPerStep; // @TODO RIGHT_LEFT
         }
       }
       
-      gotoDecSteps--;
+      gotoDecSteps -= coordsPerStep;
       lastDecStepUpAgo = 0;
     } else {
       lastDecStepUpAgo++;
@@ -325,13 +400,6 @@ void timer_handle_interrupts(int timer) {
     if (gotoRaSteps <= 0) {
       gotoRaEnabled = false;
       PORTD |= _BV(PD4); // setting direction for follow by default
-      /*
-      if (currentHemisphere == 'n') {
-        PORTD |= _BV(PD4); // setting direction for follow by default
-      } else {
-        PORTD &= ~_BV(PD4);
-      }
-      */
     }
 
     if (gotoDecSteps <= 0) {
@@ -353,6 +421,8 @@ void timer_handle_interrupts(int timer) {
 }
 
 void loop() {
+
+  checkBeep();
   
   commander.readCommandLineFromSerial();
 
@@ -371,105 +441,36 @@ void loop() {
     
       if (command.getName() == "SLEW_RA") {
         //informer.logLn("executing slew_ra");
-        gotoEnabled = false;
-        gotoRaEnabled = false;
-        gotoDecEnabled = false;
         int newSlewRa = command.getValue().toInt();
-        if (slewRa != newSlewRa) {
-          slewRa = newSlewRa;
-          if (currentHemisphere == 'n') {
-            if (slewRa > 0) {
-              PORTD &= ~_BV(PD4);
-            } else {
-              PORTD |= _BV(PD4);
-            }
-          } else {
-            if (slewRa > 0) {
-              PORTD |= _BV(PD4);
-            } else {
-              PORTD &= ~_BV(PD4);
-            }
-          }
-          /*
-          if (slewRa > 0) {
-            PORTD &= ~_BV(PD4);
-          } else {
-            PORTD |= _BV(PD4);
-          }
-          */
-          informer.logLn("slewRa: " + String(slewRa));
-        }
+        
+        slewRaProc(newSlewRa);
+
+        informer.logLn("slewRa: " + String(slewRa));
+        beep();
       }
 
       if (command.getName() == "SLEW_RA_FREQ") {
         //informer.logLn("executing slew_ra_freq");
         raFreq = command.getValue().toInt();
         informer.logLn("raFreq: " + String(slewRa));
+        beep();
       }
 
       if (command.getName() == "SLEW_DEC") {
         //informer.logLn("executing slew_dec");
-        gotoEnabled = false;
-        gotoRaEnabled = false;
-        gotoDecEnabled = false;
         int newSlewDec = command.getValue().toInt();
-        if (slewDec != newSlewDec) {
-          slewDec = newSlewDec;
 
-          if (currentDecWard == 'e') {
-            if (slewDec > 0) {
-              PORTD &= ~_BV(PD6);
-            } else {
-              PORTD |= _BV(PD6);
-            }
-          } else {
-            if (slewDec > 0) {
-              PORTD |= _BV(PD6);
-            } else {
-              PORTD &= ~_BV(PD6);
-            }
-          }
+        slewDecProc(newSlewDec);
 
-          /*
-          if (currentHemisphere == 'n') {
-            if (currentDecWard == 'e') {
-              if (slewDec > 0) {
-                PORTD &= ~_BV(PD6);
-              } else {
-                PORTD |= _BV(PD6);
-              }
-            } else {
-              if (slewDec > 0) {
-                PORTD |= _BV(PD6);
-              } else {
-                PORTD &= ~_BV(PD6);
-              }
-            }
-          } else {
-            if (currentDecWard == 'e') {
-              if (slewDec > 0) {
-                PORTD |= _BV(PD6);
-              } else {
-                PORTD &= ~_BV(PD6);
-              }
-            } else {
-              if (slewDec > 0) {
-                PORTD &= ~_BV(PD6);
-              } else {
-                PORTD |= _BV(PD6);
-              }
-            }
-          }
-          */
-          
-          informer.logLn("slewDec: " + String(slewDec));
-        }
+        informer.logLn("slewDec: " + String(slewDec));
+        beep();
       }
 
       if (command.getName() == "SLEW_DEC_FREQ") {
         //informer.logLn("executing slew_dec_freq");
         decFreq = command.getValue().toInt();
         informer.logLn("decFreq: " + String(slewDec));
+        beep();
       }
 
       if (command.getName() == "GET_DEC_WARD") {
@@ -481,19 +482,15 @@ void loop() {
         char newDecWard = command.getValue() == "e" ? 'e' : 'w';
         currentDecWard = newDecWard;
         informer.logLn("currentDecWard: " + String(currentDecWard));
+        beep();
       }
 
       if (command.getName() == "FOLLOW") {
         //informer.logLn("executing follow ...");
         bool toFollow = command.getValue().toInt() == 0 ? false : true;
-        if (toFollow) {
-          PORTD |= _BV(PD4);
-          if (currentHemisphere == 's') {
-            PORTD &= ~_BV(PD4);
-          }
-        }
-        follow = toFollow;
+        followProc(toFollow);
         informer.logLn("follow: " + String(follow));
+        beep();
       }
 
       if (command.getName() == "GET_FOLLOW") {
@@ -510,6 +507,7 @@ void loop() {
         gotoRaEnabled = false;
         gotoDecEnabled = false;
         currentRaCoords = coordinator.raCoordsToStepsFromString(command.getValue());
+        beep();
       }
 
       if (command.getName() == "SET_RA_COORDS") {
@@ -518,6 +516,7 @@ void loop() {
         gotoRaEnabled = false;
         gotoDecEnabled = false;
         currentRaCoords = command.getValue().toInt();
+        beep();
       }
 
       if (command.getName() == "GOTO_RA_COORDS") {
@@ -527,6 +526,7 @@ void loop() {
         gotoRaCoords = command.getValue().toInt();
 
         gotoRaCoordsProc(gotoRaCoords);
+        beep();
       }
 
       if (command.getName() == "GOTO_RA_COORDS_FROM_STRING") {
@@ -536,6 +536,7 @@ void loop() {
         gotoRaCoords = coordinator.raCoordsToStepsFromString(command.getValue());
 
         gotoRaCoordsProc(gotoRaCoords);
+        beep();
       }
 
       if (command.getName() == "GET_RA_COORDS_AS_STRING") {
@@ -549,6 +550,7 @@ void loop() {
         gotoRaEnabled = false;
         gotoDecEnabled = false;
         currentDecCoords = coordinator.decCoordsToStepsFromString(command.getValue());
+        beep();
       }
 
       if (command.getName() == "SET_DEC_COORDS") {
@@ -557,6 +559,7 @@ void loop() {
         gotoRaEnabled = false;
         gotoDecEnabled = false;
         currentDecCoords = command.getValue().toInt();
+        beep();
       }
 
       if (command.getName() == "GOTO_DEC_COORDS") {
@@ -566,6 +569,7 @@ void loop() {
         gotoDecCoords = command.getValue().toInt();
 
         gotoDecCoordsProc(gotoDecCoords);
+        beep();
       }
 
       if (command.getName() == "GOTO_DEC_COORDS_FROM_STRING") {
@@ -575,11 +579,36 @@ void loop() {
         gotoDecCoords = coordinator.decCoordsToStepsFromString(command.getValue());
 
         gotoDecCoordsProc(gotoDecCoords);
+        beep();
       }
 
       if (command.getName() == "GET_DEC_COORDS_AS_STRING") {
         String decCoordsAsString = coordinator.decCoordsToStringFromSteps(currentDecCoords);
         informer.send("DEC_COORDS_AS_STRING=" + decCoordsAsString);
+      }
+
+      if (command.getName() == "GUIDE_NORTH") {
+        int guideDurationMillis = command.getValue().toInt();
+        guideProc(guideDirections.guideNorth, guideDurationMillis);
+        beep();
+      }
+
+      if (command.getName() == "GUIDE_SOUTH") {
+        int guideDurationMillis = command.getValue().toInt();
+        guideProc(guideDirections.guideSouth, guideDurationMillis);
+        beep();
+      }
+
+      if (command.getName() == "GUIDE_EAST") {
+        int guideDurationMillis = command.getValue().toInt();
+        guideProc(guideDirections.guideEast, guideDurationMillis);
+        beep();
+      }
+
+      if (command.getName() == "GUIDE_WEST") {
+        int guideDurationMillis = command.getValue().toInt();
+        guideProc(guideDirections.guideWest, guideDurationMillis);
+        beep();
       }
     
   }
@@ -589,13 +618,59 @@ void loop() {
 
   //informer.logLn("currentRaCoords: " + String(currentRaCoords) + " ; " + "currentDecCoords: " + String(currentDecCoords)); 
 
-  /*
+  
   if (irrecv.decode(&irrecvResults)) {
-    resultsValue = irrecvResults.value;
-    informer.logLn("IR: resultsValue: " + String(resultsValue, HEX));
+    irrecvPreviousResultsValue = irrecvResultsValue == IR_BUTTON_REPEAT ? irrecvPreviousResultsValue : irrecvResultsValue;
+    irrecvResultsValue = irrecvResults.value;
     irrecv.resume();
+    //Serial.println(String(irrecvResultsValue, HEX));
+
+    if (irrecvResultsValue == IR_BUTTON_1 || (irrecvResultsValue == IR_BUTTON_REPEAT && irrecvPreviousResultsValue == IR_BUTTON_1)) {
+      beep();
+    }
+
+    if (irrecvResultsValue == IR_BUTTON_STAR) {
+        followProc(!follow);
+        beep();
+    }
+
+    if (irrecvResultsValue == IR_BUTTON_DEC_PLUS) {
+        int newSlewDec = slewDec == 1 ? 0 : 1;
+        slewDecProc(newSlewDec);
+        beep();
+    }
+
+    if (irrecvResultsValue == IR_BUTTON_DEC_MINUS) {
+        int newSlewDec = slewDec == -1 ? 0 : -1;
+        slewDecProc(newSlewDec);
+        beep();
+    }
+
+    if (irrecvResultsValue == IR_BUTTON_RA_PLUS) {
+        int newSlewRa = slewRa == 1 ? 0 : 1;
+        slewRaProc(newSlewRa);
+        beep();
+    }
+
+    if (irrecvResultsValue == IR_BUTTON_RA_MINUS) {
+        int newSlewRa = slewRa == -1 ? 0 : -1;
+        slewRaProc(newSlewRa);
+        beep();
+    }
+
+    if (irrecvResultsValue == IR_BUTTON_STOP) {
+        slewRaProc(0);
+        slewDecProc(0);
+        beep();
+    }
   }
-  */
+
+  if (previouslyGotoEnabled && !gotoEnabled) {
+    beep();
+  }
+
+  previouslyGotoEnabled = gotoEnabled;
+  
 }
 
 void gotoRaCoordsProc(long gotoRaCoords)
@@ -630,48 +705,6 @@ void gotoRaCoordsProc(long gotoRaCoords)
 void gotoDecCoordsProc(long gotoDecCoords)
 {
   long newGotoDecSteps = gotoDecCoords - currentDecCoords;
-  
-  // @TODO RIGHT_LEFT
-
-  /*
-  if (currentHemisphere == 'n') {
-    if (currentDecWard == 'e') {
-      if (newGotoDecSteps < 0) {
-        gotoDecDir = decSouth;
-        PORTD |= _BV(PD6);
-      } else {
-        gotoDecDir = decNorth;
-        PORTD &= ~_BV(PD6);
-      }
-    } else {
-      if (newGotoDecSteps < 0) {
-        gotoDecDir = decNorth;
-        PORTD &= ~_BV(PD6);
-      } else {
-        gotoDecDir = decSouth;
-        PORTD |= _BV(PD6);
-      }
-    }
-  } else {
-    if (currentDecWard == 'e') {
-      if (newGotoDecSteps < 0) {
-        gotoDecDir = decSouth;
-        PORTD &= ~_BV(PD6);
-      } else {
-        gotoDecDir = decNorth;
-        PORTD |= _BV(PD6);
-      }
-    } else {
-      if (newGotoDecSteps < 0) {
-        gotoDecDir = decNorth;
-        PORTD |= _BV(PD6);
-      } else {
-        gotoDecDir = decSouth;
-        PORTD &= ~_BV(PD6);
-      }
-    }
-  }
-  */
 
   if (currentDecWard == 'e') {
     if (newGotoDecSteps < 0) {
@@ -694,19 +727,96 @@ void gotoDecCoordsProc(long gotoDecCoords)
       PORTD &= ~_BV(PD6);
     }
   }
-
-  /*
-  if (newGotoDecSteps < 0) {
-    gotoDecDir = decSouth;
-    PORTD |= _BV(PD6);
-  } else {
-    gotoDecDir = decNorth;
-    PORTD &= ~_BV(PD6);
-  }
-  */
   
   gotoDecSteps = abs(newGotoDecSteps);
   
   gotoEnabled = true;
   gotoDecEnabled = true;
+}
+
+void followProc(bool toFollow)
+{
+  if (toFollow) {
+    PORTD |= _BV(PD4);
+    if (currentHemisphere == 's') {
+      PORTD &= ~_BV(PD4);
+    }
+  }
+  follow = toFollow;
+}
+
+void slewRaProc(int newSlewRa)
+{
+  gotoEnabled = false;
+  gotoRaEnabled = false;
+  gotoDecEnabled = false;
+  if (slewRa != newSlewRa) {
+    slewRa = newSlewRa;
+    if (currentHemisphere == 'n') {
+      if (slewRa > 0) {
+        PORTD &= ~_BV(PD4);
+      } else {
+        PORTD |= _BV(PD4);
+      }
+    } else {
+      if (slewRa > 0) {
+        PORTD |= _BV(PD4);
+      } else {
+        PORTD &= ~_BV(PD4);
+      }
+    }
+  }
+}
+
+void slewDecProc(int newSlewDec)
+{
+  gotoEnabled = false;
+  gotoRaEnabled = false;
+  gotoDecEnabled = false;
+  if (slewDec != newSlewDec) {
+    slewDec = newSlewDec;
+  
+    if (currentDecWard == 'e') {
+      if (slewDec > 0) {
+        PORTD &= ~_BV(PD6);
+      } else {
+        PORTD |= _BV(PD6);
+      }
+    } else {
+      if (slewDec > 0) {
+        PORTD |= _BV(PD6);
+      } else {
+        PORTD &= ~_BV(PD6);
+      }
+    }
+  }
+}
+
+void guideProc(int guideDirection, int guideDurationMillis)
+{
+  
+}
+
+void beep()
+{
+  PORTB |= _BV(PB5);
+  beepMillisOn = millis();
+  beepOn = true;
+}
+
+void checkBeep()
+{
+  if (!beepOn) {
+    return;
+  }
+  if (millis() - beepMillisOn > beepMillisPeriod || millis() < beepMillisOn) {
+    //digitalWrite(pin, LOW);
+    PORTB &= ~_BV(PB5);
+    beepOn = false;
+  }
+
+  // millis( counter overflow fix)
+  if (millis() < beepMillisOn) {
+    beepMillisOn = millis();
+  }
 }
