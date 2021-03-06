@@ -618,7 +618,8 @@ void loop() {
 
   //informer.logLn("currentRaCoords: " + String(currentRaCoords) + " ; " + "currentDecCoords: " + String(currentDecCoords)); 
 
-  
+
+  /*
   if (irrecv.decode(&irrecvResults)) {
     irrecvPreviousResultsValue = irrecvResultsValue == IR_BUTTON_REPEAT ? irrecvPreviousResultsValue : irrecvResultsValue;
     irrecvResultsValue = irrecvResults.value;
@@ -664,6 +665,7 @@ void loop() {
         beep();
     }
   }
+  */
 
   if (previouslyGotoEnabled && !gotoEnabled) {
     beep();
